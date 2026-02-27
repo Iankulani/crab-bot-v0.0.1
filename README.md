@@ -1,5 +1,9 @@
 # crab-bot-v0.0.1
 
+<img width="624" height="604" alt="crab" src="https://github.com/user-attachments/assets/b3541a31-f3ec-4bce-8077-71d06d493db4" />
+
+
+
 Crab-Bot is a revolutionary cyber security tool designed to transform ubiquitous messaging platforms into powerful command and control terminals.
 By enabling users to execute complex security commands directly from Telegram, Discord, WhatsApp, iMessage, and other messaging applications, Crab-Bot redefines the boundaries of remote cyber operations. Whether you are conducting penetration tests, managing cyber drills, or monitoring threat intelligence, Crab-Bot puts the power of a full security suite in your pocket.
 
