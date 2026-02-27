@@ -1,0 +1,325 @@
+# .github/workflows/python-publish.yml
+name: Publish Crab-Bot to PyPI
+
+on:
+  push:
+    branches: [ main, master ]
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [ main, master ]
+  release:
+    types: [ published ]
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  test:
+    name: 🧪 Test on ${{ matrix.os }} with Python ${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ['3.8', '3.9', '3.10', '3.11']
+
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+
+    - name: 🐍 Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+        cache: 'pip'
+        cache-dependency-path: |
+          setup.py
+          requirements.txt
+
+    - name: 📦 Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install flake8 pytest pytest-cov wheel setuptools
+        pip install -r requirements.txt || true
+        # Install optional dependencies
+        pip install discord.py telethon slack-sdk python-whois scapy \
+                    selenium webdriver-manager qrcode[pil] pyshorteners \
+                    paramiko cryptography psutil || true
+
+    - name: 🔍 Lint with flake8
+      run: |
+        # Stop the build if there are Python syntax errors or undefined names
+        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+        # Exit-zero treats all errors as warnings
+        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+
+    - name: 🔧 Create necessary directories
+      run: |
+        mkdir -p .crab_bot
+        mkdir -p reports scan_results alerts monitoring backups temp scripts
+        mkdir -p .crab_bot/nikto_results
+        mkdir -p .crab_bot/whatsapp_session
+        mkdir -p .crab_bot/traffic_logs
+        mkdir -p .crab_bot/phishing_pages
+        mkdir -p .crab_bot/phishing_templates
+        mkdir -p .crab_bot/phishing_logs
+        mkdir -p .crab_bot/captured_credentials
+        mkdir -p .crab_bot/ssh_keys
+        mkdir -p .crab_bot/ssh_logs
+        mkdir -p .crab_bot/time_history
+
+    - name: 🧪 Run tests with pytest
+      run: |
+        pytest --cov=crab_bot --cov-report=xml --cov-report=html || true
+
+    - name: 📊 Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+        fail_ci_if_error: false
+
+    - name: 📦 Build package
+      if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.9'
+      run: |
+        python -m pip install build
+        python -m build
+
+    - name: 📤 Upload build artifacts
+      if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.9'
+      uses: actions/upload-artifact@v3
+      with:
+        name: dist
+        path: dist/
+
+  security:
+    name: 🔒 Security Scan
+    runs-on: ubuntu-latest
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+
+    - name: 🐍 Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.9'
+
+    - name: 📦 Install safety and bandit
+      run: |
+        python -m pip install --upgrade pip
+        pip install safety bandit
+
+    - name: 🔍 Run Bandit security linter
+      run: |
+        bandit -r . -f html -o bandit_report.html || true
+
+    - name: 🔍 Check dependencies for vulnerabilities
+      run: |
+        safety check || true
+
+    - name: 📤 Upload security reports
+      uses: actions/upload-artifact@v3
+      with:
+        name: security-reports
+        path: |
+          bandit_report.html
+          *.txt
+
+  deploy:
+    name: 🚀 Deploy to PyPI
+    runs-on: ubuntu-latest
+    needs: [test, security]
+    if: github.event_name == 'release' && github.event.action == 'published'
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: 🐍 Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.9'
+
+    - name: 📦 Install build dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install build twine wheel
+
+    - name: 🔧 Update version from tag
+      run: |
+        # Get version from tag
+        VERSION=${GITHUB_REF#refs/tags/v}
+        echo "Version: $VERSION"
+        
+        # Update version in setup.py if it exists
+        if [ -f setup.py ]; then
+          sed -i "s/version=\".*\"/version=\"$VERSION\"/" setup.py
+        fi
+        
+        # Update version in __init__.py if it exists
+        if [ -f crab_bot/__init__.py ]; then
+          sed -i "s/__version__ = .*/__version__ = \"$VERSION\"/" crab_bot/__init__.py
+        fi
+        
+        # Create version file
+        echo "$VERSION" > VERSION
+
+    - name: 📦 Build package
+      run: |
+        python -m build
+
+    - name: 🔍 Check package with twine
+      run: |
+        twine check dist/*
+
+    - name: 🚀 Publish to Test PyPI
+      uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        password: ${{ secrets.TEST_PYPI_API_TOKEN }}
+        repository_url: https://test.pypi.org/legacy/
+        skip_existing: true
+        verbose: true
+
+    - name: 🚀 Publish to PyPI
+      uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        password: ${{ secrets.PYPI_API_TOKEN }}
+        verbose: true
+
+  docker:
+    name: 🐳 Build and Push Docker Image
+    runs-on: ubuntu-latest
+    needs: [test]
+    if: github.event_name == 'release' && github.event.action == 'published'
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+
+    - name: 🐳 Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: 🔑 Login to DockerHub
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+
+    - name: 🔑 Login to GitHub Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.repository_owner }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: 🏷️ Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: |
+          ${{ secrets.DOCKER_USERNAME }}/crab-bot
+          ghcr.io/${{ github.repository_owner }}/crab-bot
+        tags: |
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+          type=sha,format=long
+          type=raw,value=latest,enable={{is_default_branch}}
+
+    - name: 🐳 Build and push Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+  release_assets:
+    name: 📦 Create GitHub Release Assets
+    runs-on: ubuntu-latest
+    needs: [deploy, docker]
+    if: github.event_name == 'release' && github.event.action == 'published'
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+
+    - name: 🐍 Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.9'
+
+    - name: 📦 Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pyinstaller
+
+    - name: 🔨 Build executable for Linux
+      run: |
+        pyinstaller --onefile --name crab-bot-linux crab_bot.py
+
+    - name: 🔨 Build executable for Windows
+      run: |
+        pyinstaller --onefile --name crab-bot-windows.exe crab_bot.py
+
+    - name: 🔨 Build executable for macOS
+      run: |
+        pyinstaller --onefile --name crab-bot-macos crab_bot.py
+
+    - name: 📝 Generate documentation
+      run: |
+        # Generate README with version
+        echo "# Crab-Bot v${{ github.event.release.tag_name }}" > README.md
+        echo "" >> README.md
+        cat README.template.md >> README.md 2>/dev/null || true
+
+    - name: 📤 Upload release assets
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          dist/*
+          crab-bot-linux
+          crab-bot-windows.exe
+          crab-bot-macos
+          README.md
+          LICENSE
+          requirements.txt
+        generate_release_notes: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  notify:
+    name: 📢 Send Notification
+    runs-on: ubuntu-latest
+    needs: [deploy, docker, release_assets]
+    if: always() && github.event_name == 'release' && github.event.action == 'published'
+    
+    steps:
+    - name: 📢 Send Discord notification
+      uses: appleboy/discord-action@0.0.3
+      with:
+        webhook_id: ${{ secrets.DISCORD_WEBHOOK_ID }}
+        webhook_token: ${{ secrets.DISCORD_WEBHOOK_TOKEN }}
+        color: "#FFA500"
+        title: "🚀 Crab-Bot v${{ github.event.release.tag_name }} Released!"
+        message: |
+          **Version:** ${{ github.event.release.tag_name }}
+          **Released by:** ${{ github.actor }}
+          
+          **Release Notes:**
+          ${{ github.event.release.body }}
+          
+          **Installation:**
+          ```bash
+          pip install crab-bot
+          ```
+          
+          **Docker:**
+          ```bash
+          docker pull ${{ secrets.DOCKER_USERNAME }}/crab-bot:latest
+          ```
+          
+          [View Release](${{ github.event.release.html_url }})
