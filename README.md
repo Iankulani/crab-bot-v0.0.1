@@ -66,4 +66,17 @@ All social engineering features include strict safeguards.
 * Cannot be used to collect real credentials
 
 * Full compliance with security awareness training regulations
+* 
+
+
+# How to clone the repo
+```bash
+git clone https://github.com/Iankulani/crab-bot-v0.0.1.git
+cd crab-bot-v0.0.1
+```
+
+ # How to run
+ ```bash
+python3 crab-bot-v0.0.1.py
+``` 
  
