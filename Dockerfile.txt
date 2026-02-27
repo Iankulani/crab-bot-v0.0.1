@@ -1,0 +1,73 @@
+FROM python:3.11-slim
+
+LABEL maintainer="Crab-Bot Team"
+LABEL description="Crab-Bot Cybersecurity Tool with Orange Theme"
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    nmap \
+    nikto \
+    traceroute \
+    dnsutils \
+    whois \
+    curl \
+    wget \
+    netcat-openbsd \
+    openssh-client \
+    iptables \
+    chromium \
+    chromium-driver \
+    signal-cli \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create app directory
+WORKDIR /app
+
+# Copy requirements first for better caching
+COPY requirements.txt .
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application
+COPY crab_bot.py .
+
+# Create necessary directories
+RUN mkdir -p /root/.crab_bot \
+    /root/.crab_bot/ssh_keys \
+    /root/.crab_bot/nikto_results \
+    /root/.crab_bot/traffic_logs \
+    /root/.crab_bot/phishing_pages \
+    /root/.crab_bot/phishing_templates \
+    /root/.crab_bot/phishing_logs \
+    /root/.crab_bot/captured_credentials \
+    /root/.crab_bot/whatsapp_session \
+    /root/.crab_bot/ssh_logs \
+    /root/.crab_bot/time_history \
+    /app/reports \
+    /app/scan_results \
+    /app/alerts \
+    /app/monitoring \
+    /app/backups \
+    /app/temp \
+    /app/scripts
+
+# Set permissions
+RUN chmod -R 755 /app /root/.crab_bot
+
+# Set environment variables
+ENV PYTHONUNBUFFERED=1
+ENV TERM=xterm-256color
+
+# Expose ports for phishing server
+EXPOSE 8080
+EXPOSE 8443
+
+# Run as non-root user for security
+RUN useradd -m -u 1000 crabuser && \
+    chown -R crabuser:crabuser /app /root/.crab_bot
+USER crabuser
+
+# Run the application
+CMD ["python", "crab_bot.py"]
