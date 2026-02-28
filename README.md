@@ -66,7 +66,6 @@ All social engineering features include strict safeguards.
 * Cannot be used to collect real credentials
 
 * Full compliance with security awareness training regulations
-* 
 
 
 # How to clone the repo
